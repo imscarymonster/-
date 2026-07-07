@@ -1,10 +1,9 @@
-# 数据库 ORM 模型
+# 数据库 ORM 模型（扩展模型 — Bus, Driver, TripLog, WaitRecord）
+# 注意：Route 与 Station 的主定义位于上级 models.py；此文件仅补充车辆/司机/日志等扩展实体。
 from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Text
-from sqlalchemy.orm import DeclarativeBase, relationship
+from sqlalchemy.orm import relationship
 
-
-class Base(DeclarativeBase):
-    pass
+from ..database import Base
 
 
 class Route(Base):

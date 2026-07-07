@@ -1,8 +1,8 @@
 """OptiBus 系统 ORM 模型定义。"""
 
-from datetime import datetime
+from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship
 
 from .database import Base
@@ -46,8 +46,8 @@ class Station(Base):
     route_id = Column(Integer, ForeignKey("routes.id"), nullable=False, index=True)
     station_name = Column(String(255), nullable=False)
     sequence = Column(Integer, nullable=False, default=1)
-    latitude = Column(String(64), nullable=True)
-    longitude = Column(String(64), nullable=True)
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
 
     route = relationship("Route", back_populates="stations")
 
@@ -59,7 +59,7 @@ class DispatchLog(Base):
     bus_id = Column(Integer, nullable=False, index=True)
     from_route_id = Column(Integer, ForeignKey("routes.id"), nullable=False, index=True)
     to_route_id = Column(Integer, ForeignKey("routes.id"), nullable=False, index=True)
-    trigger_time = Column(DateTime, nullable=False, default=datetime.utcnow)
+    trigger_time = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     complete_time = Column(DateTime, nullable=True)
 
     from_route = relationship("Route", foreign_keys=[from_route_id], back_populates="from_dispatch_logs")
