@@ -16,12 +16,38 @@
 
 ## 4. 项目目录
 ```text
-project/
-├─ frontend/
-├─ backend/
-├─ data-or-database/
-├─ docs/
-└─ README.md
+optibus-project/
+├── README.md                  # 核心说明：项目介绍、快速启动、分工与设计思路
+├── requirements.txt           # Python 后端依赖库
+├── .env                       # 环境变量（存放数据库连接、API密钥等敏感信息）
+│
+├── frontend/                  # 前端源码 (Vue3/React)
+│   ├── public/                # 静态资源 (图标、园区地图背景图)
+│   ├── src/
+│   │   ├── api/               # 接口调用模块
+│   │   ├── components/        # 公共UI组件 (Header, StationCircle, BusIcon)
+│   │   ├── views/             # 视图层：乘客、司机、管理端页面
+│   │   ├── store/             # 状态管理 (存储实时位置、车辆变线状态)
+│   │   └── utils/             # 工具类 (WebSocket通信、语音TTS播报)
+│   ├── package.json           # 前端依赖配置
+│   └── vite.config.js         # Vite 构建配置
+│
+├── backend/                   # 后端源码 (FastAPI/Spring Boot)
+│   ├── app/
+│   │   ├── core/              # 核心调度算法引擎 (比例计算、最近车辆筛选)
+│   │   ├── api/               # 路由模块 (RESTful API 接口定义)
+│   │   ├── models/            # 数据库ORM模型
+│   │   └── websocket.py       # WebSocket 网关 (处理三端实时通信)
+│   └── main.py                # 后端主入口 (FastAPI启动类)
+│
+├── database/                  # 数据库相关
+│   ├── schema.sql             # 初始化 SQL 脚本 (建表语句)
+│   └── seed_data.json         # 初始化的线路与站点配置数据
+│
+└── docs/                      # 课程验收文档
+    ├── SystemArchitecture.md  # 3. 系统总体架构文档
+    └── VibeLogs/              # 项目迭代日志
+        └── vibe_log_01.md
 ```
 
 ## 5. 环境要求
