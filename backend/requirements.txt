@@ -1,8 +1,0 @@
-fastapi
-uvicorn
-sqlalchemy
-redis
-psycopg2-binary
-pydantic
-pyjwt
-websockets
