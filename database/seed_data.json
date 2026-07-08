@@ -1,0 +1,33 @@
+{
+  "routes": [
+    { "name": "1号线 - 教学区环线", "color": "#3388FF", "status": 1 },
+    { "name": "2号线 - 生活区环线", "color": "#FF6633", "status": 1 },
+    { "name": "3号线 - 宿舍-图书馆专线", "color": "#33CC66", "status": 1 }
+  ],
+  "stations": [
+    { "route_id": 1, "name": "东门", "latitude": 18.4001, "longitude": 110.0101, "seq_order": 1 },
+    { "route_id": 1, "name": "教学楼A区", "latitude": 18.4012, "longitude": 110.0112, "seq_order": 2 },
+    { "route_id": 1, "name": "实验楼", "latitude": 18.4023, "longitude": 110.0123, "seq_order": 3 },
+    { "route_id": 1, "name": "行政楼", "latitude": 18.4034, "longitude": 110.0134, "seq_order": 4 },
+    { "route_id": 2, "name": "食堂", "latitude": 18.4041, "longitude": 110.0141, "seq_order": 1 },
+    { "route_id": 2, "name": "宿舍1号楼", "latitude": 18.4052, "longitude": 110.0152, "seq_order": 2 },
+    { "route_id": 2, "name": "宿舍3号楼", "latitude": 18.4063, "longitude": 110.0163, "seq_order": 3 },
+    { "route_id": 2, "name": "运动场", "latitude": 18.4074, "longitude": 110.0174, "seq_order": 4 },
+    { "route_id": 3, "name": "宿舍区总站", "latitude": 18.4050, "longitude": 110.0150, "seq_order": 1 },
+    { "route_id": 3, "name": "图书馆", "latitude": 18.4020, "longitude": 110.0120, "seq_order": 2 }
+  ],
+  "buses": [
+    { "plate": "琼A001", "route_id": 1, "status": 1 },
+    { "plate": "琼A002", "route_id": 1, "status": 1 },
+    { "plate": "琼A003", "route_id": 2, "status": 1 },
+    { "plate": "琼A004", "route_id": 2, "status": 1 },
+    { "plate": "琼A005", "route_id": 3, "status": 1 }
+  ],
+  "drivers": [
+    { "name": "张师傅", "phone": "13800001001" },
+    { "name": "李师傅", "phone": "13800001002" },
+    { "name": "王师傅", "phone": "13800001003" },
+    { "name": "赵师傅", "phone": "13800001004" },
+    { "name": "孙师傅", "phone": "13800001005" }
+  ]
+}
