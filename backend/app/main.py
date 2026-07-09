@@ -477,15 +477,12 @@ def _find_fastest_bus_to_hub(source_route_key: str) -> str | None:
 
 
 def _resolve_dispatch_target(target_route_key: str, source_route_key: str) -> str:
-    """方向继承：目标线前缀 + 源车方向后缀。
+    """直接返回目标线路，不做方向继承。
 
-    例: target=line1_cw, source=line2_cw → line1_cw
-         target=line1_ccw, source=line2_cw → line1_cw
+    调度逻辑：支援车去目标线的顺/逆方向由目标线自身需求决定，
+    不应继承源车方向。target_route_key 已经是具体方向（如 line1_cw）。
     """
-    import re
-    target_base = re.sub(r'_(cw|ccw)$', '', target_route_key)
-    source_dir = _get_route_direction(source_route_key)
-    return target_base + source_dir
+    return target_route_key
 
 
 # ============================================================================
@@ -771,7 +768,12 @@ def _check_all_dispatch_conditions():
         if not _is_overcrowded(target_rk):
             continue
 
-        candidates = [rk for rk in ALL_ROUTE_KEYS if rk != target_rk and _can_spare_bus(rk)]
+        # 排除自身 + 同线反向（line1_ccw 不能支援 line1_cw，否则是左手倒右手）
+        target_base = target_rk.rstrip("_cw").rstrip("_ccw")
+        candidates = [rk for rk in ALL_ROUTE_KEYS
+                      if rk != target_rk
+                      and not rk.startswith(target_base)
+                      and _can_spare_bus(rk)]
         if not candidates:
             continue
 
@@ -857,9 +859,9 @@ async def _scan_and_dispatch():
 
     await asyncio.to_thread(_evict_expired_passengers)
     await asyncio.to_thread(_check_all_return_conditions)
-    await asyncio.to_thread(_check_pending_dispatches)
     await asyncio.to_thread(_update_lap_state)
-    await asyncio.to_thread(_check_all_dispatch_conditions)
+    await asyncio.to_thread(_check_all_dispatch_conditions)   # 阶段 A：先打标记
+    await asyncio.to_thread(_check_pending_dispatches)       # 阶段 B：后执行到站变线
 
     # ---- 异步推送调度通知给司机端（触发 TTS 语音播报） ----
     for event in _dispatch_events:
