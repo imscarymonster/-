@@ -1,33 +1,33 @@
 <template>
   <div class="h-screen bg-gray-900 flex flex-col items-center justify-center text-white relative">
 
-    <button @click="handleLogout" class="absolute top-6 left-6 text-gray-400 hover:text-white text-xl transition-colors">
-      ← 退出排班
+    <button @click="handleLogout" class="absolute top-4 left-4 text-gray-400 hover:text-white text-base sm:text-xl transition-colors z-20">
+      ← 退出
     </button>
 
     <!-- 线路选择 -->
-    <div class="absolute top-6 right-6 flex items-center gap-3">
-      <span class="text-gray-400 text-sm">驾驶线路：</span>
+    <div class="absolute top-4 right-4 flex items-center gap-2 z-20">
+      <span class="text-gray-400 text-xs sm:text-sm hidden sm:inline">驾驶线路：</span>
       <select
         v-model="selectedRouteKey"
         @change="onRouteChange"
-        class="bg-gray-800 text-white border border-gray-600 rounded-lg px-3 py-2 text-sm font-bold focus:outline-none focus:border-blue-500"
+        class="bg-gray-800 text-white border border-gray-600 rounded-lg px-2 py-2 text-xs sm:text-sm font-bold focus:outline-none focus:border-blue-500 max-w-[120px] sm:max-w-none"
       >
-        <option value="line1_cw">1号线（顺时针）</option>
-        <option value="line1_ccw">1号线（逆时针）</option>
-        <option value="line2_cw">2号线（顺时针）</option>
-        <option value="line2_ccw">2号线（逆时针）</option>
-        <option value="teacher_cw">教师专线（顺时针）</option>
-        <option value="teacher_ccw">教师专线（逆时针）</option>
+        <option value="line1_cw">1号线</option>
+        <option value="line1_ccw">1号线(逆)</option>
+        <option value="line2_cw">2号线</option>
+        <option value="line2_ccw">2号线(逆)</option>
+        <option value="teacher_cw">教师专线</option>
+        <option value="teacher_ccw">教师(逆)</option>
       </select>
     </div>
 
-    <div class="text-center space-y-6">
-      <p class="text-3xl text-gray-400 font-bold">当前任务</p>
-      <h1 class="text-7xl font-black text-green-500 tracking-widest">
-        {{ displayRouteName }} <span class="text-5xl text-white">{{ connectionStatus }}</span>
+    <div class="text-center space-y-4 sm:space-y-6 px-4">
+      <p class="text-xl sm:text-3xl text-gray-400 font-bold">当前任务</p>
+      <h1 :class="['text-4xl sm:text-5xl md:text-7xl font-black tracking-widest transition-colors duration-300',
+        dispatchFlash ? 'text-red-500 animate-pulse' : 'text-green-500']">
+        {{ displayRouteName }} <span class="text-2xl sm:text-3xl md:text-5xl text-white">{{ connectionStatus }}</span>
       </h1>
-      <p class="text-4xl font-bold mt-10">下一站：{{ nextStation }}</p>
     </div>
 
     <!-- 模拟行驶按钮（无需真实 GPS） -->
@@ -42,7 +42,7 @@
     </div>
 
     <!-- GPS 状态面板 -->
-    <div class="mt-8 bg-gray-800 p-4 rounded-xl border border-gray-700 shadow-inner inline-block text-left z-10 min-w-[320px]">
+    <div class="mt-4 sm:mt-8 bg-gray-800 p-3 sm:p-4 rounded-xl border border-gray-700 shadow-inner text-left z-10 mx-4 w-[calc(100%-2rem)] max-w-[320px]">
       <div class="flex items-center gap-2 mb-2">
         <div :class="['w-3 h-3 rounded-full animate-pulse', gpsOnline ? 'bg-green-500' : 'bg-red-500']"></div>
         <span class="text-sm text-gray-400 font-bold tracking-widest">
@@ -59,7 +59,7 @@
     <!-- 调度模拟按钮 -->
     <button
       @click="simulateDispatch"
-      class="absolute bottom-12 px-8 py-4 bg-red-600 hover:bg-red-500 rounded-full text-xl font-bold transition-all active:scale-95 shadow-lg shadow-red-900"
+      class="absolute bottom-6 sm:bottom-12 px-5 sm:px-8 py-3 sm:py-4 bg-red-600 hover:bg-red-500 rounded-full text-sm sm:text-xl font-bold transition-all active:scale-95 shadow-lg shadow-red-900"
     >
       ⚠️ 模拟接收后台调度指令 (测试语音)
     </button>
@@ -88,7 +88,6 @@ const routeNameMap = {
 const displayRouteName = computed(() => routeNameMap[selectedRouteKey.value] || selectedRouteKey.value);
 
 const connectionStatus = ref('正常行驶');
-const nextStation = ref('--');
 const gpsOnline = ref(false);
 const syncStatus = ref('等待首次定位...');
 
@@ -107,6 +106,8 @@ const onRouteChange = () => {
 // 2. 退出登录
 // ==========================================
 const handleLogout = () => {
+  // 通知后端签退（不等待，sendBeacon 在 onUnmounted 做兜底）
+  axios.post('/api/driver/sign_off', { busId: driverId.value }).catch(() => {});
   localStorage.removeItem('driverToken');
   localStorage.removeItem('driverId');
   localStorage.removeItem('driverRoute');
@@ -130,7 +131,6 @@ const simulateDispatch = () => {
 const currentLat = ref('正在定位...');
 const currentLng = ref('正在定位...');
 let watchId = null;
-let syncTimer = null;
 
 const sendLocation = async (lat, lng) => {
   try {
@@ -204,19 +204,78 @@ const startGPS = () => {
 };
 
 // ==========================================
-// 5. 获取当前车辆的实时拓扑信息
+// 5. WebSocket 连接 — 接收后端调度通知 + 自动 TTS 播报
 // ==========================================
-const fetchBusInfo = async () => {
+let ws = null;
+let wsReconnectTimer = null;
+
+const connectWebSocket = () => {
+  const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
+  const wsUrl = `${protocol}://${location.host}/ws/driver/${driverId.value}`;
+
   try {
-    const res = await axios.get('/api/buses/locations');
-    const myBus = res.data.buses?.find(b => b.busId === driverId.value);
-    if (myBus) {
-      nextStation.value = myBus.toStation || '--';
-      connectionStatus.value = myBus.status === 'arrived' ? '已到站' : '行驶中';
-    }
+    ws = new WebSocket(wsUrl);
   } catch (e) {
-    // 静默失败
+    console.warn('WebSocket 创建失败，1秒后重试');
+    wsReconnectTimer = setTimeout(connectWebSocket, 1000);
+    return;
   }
+
+  ws.onopen = () => {
+    console.log('WebSocket 已连接:', wsUrl);
+    syncStatus.value = 'WebSocket 已连接';
+  };
+
+  ws.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+      if (msg.type === 'dispatch') {
+        console.log('收到调度指令:', msg);
+        // 触发 TTS 语音播报
+        speakDispatch(msg.message);
+        // 屏幕闪烁提示
+        flashDispatchAlert(msg);
+      }
+    } catch (e) {
+      console.warn('WebSocket 消息解析失败:', e);
+    }
+  };
+
+  ws.onclose = () => {
+    console.log('WebSocket 断开，3秒后重连');
+    wsReconnectTimer = setTimeout(connectWebSocket, 3000);
+  };
+
+  ws.onerror = () => {
+    // onclose 会自动触发重连
+  };
+};
+
+// TTS 语音播报
+const speakDispatch = (text) => {
+  if (!window.speechSynthesis) {
+    console.warn('浏览器不支持 TTS');
+    return;
+  }
+  // 取消正在播放的语音
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = 'zh-CN';
+  utterance.rate = 1.15;
+  utterance.pitch = 1.0;
+  utterance.volume = 1.0;
+  window.speechSynthesis.speak(utterance);
+};
+
+// 调度播报闪烁提示
+const dispatchFlash = ref(false);
+const flashDispatchAlert = (msg) => {
+  dispatchFlash.value = true;
+  connectionStatus.value = '调度中!';
+  setTimeout(() => {
+    dispatchFlash.value = false;
+    connectionStatus.value = '正常行驶';
+  }, 5000);
 };
 
 // ==========================================
@@ -224,12 +283,18 @@ const fetchBusInfo = async () => {
 // ==========================================
 onMounted(() => {
   startGPS();
-  syncTimer = setInterval(fetchBusInfo, 3000);
+  connectWebSocket();
 });
 
 onUnmounted(() => {
+  // 页面关闭时自动签退（Blob 确保正确的 Content-Type）
+  try {
+    const blob = new Blob([JSON.stringify({ busId: driverId.value })], { type: 'application/json' });
+    navigator.sendBeacon('/api/driver/sign_off', blob);
+  } catch(e) {}
   if (watchId !== null) navigator.geolocation.clearWatch(watchId);
-  if (syncTimer) clearInterval(syncTimer);
+  if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
+  if (ws) { ws.onclose = null; ws.close(); }
   stopSimulateGPS();
 });
 

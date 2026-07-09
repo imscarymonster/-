@@ -62,7 +62,7 @@
       </g>
       
 <template v-if="showBuses">
-      <g v-for="bus in activeBuses" :key="bus.busId" class="transition-all duration-1000 ease-linear">
+      <g v-for="bus in activeBuses" :key="bus.busId" class="transition-all duration-500 ease-linear">
         <circle
           :cx="getBusX(bus)"
           :cy="getBusY(bus)"
@@ -82,16 +82,16 @@
         </text>
       </g>
     </template>
-    </svg><div class="absolute bottom-6 right-6 bg-white/90 backdrop-blur-sm p-4 rounded-xl shadow-lg border border-gray-200 flex gap-6 text-xs font-bold text-gray-700 pointer-events-none z-20">
-      <div class="flex items-center gap-2"><div class="w-8 h-2 bg-[#102c4c] rounded-full"></div>1号线</div>
-      <div class="flex items-center gap-2"><div class="w-8 h-2 bg-[#7ab829] rounded-full"></div>2号线</div>
-      <div class="flex items-center gap-2"><div class="w-8 h-2 bg-[#c42126] rounded-full"></div>教师专线</div>
-      <div class="flex items-center gap-2"><div class="w-4 h-4 rounded-full border-[3px] border-[#102c4c] bg-white"></div>普通站点</div>
+    </svg><div class="absolute bottom-1 sm:bottom-3 right-1 sm:right-3 bg-white/75 backdrop-blur-sm py-1 px-1.5 sm:py-1.5 sm:px-2.5 rounded-lg shadow-sm border border-gray-200/60 flex items-center gap-1.5 sm:gap-3 text-[9px] sm:text-xs font-semibold text-gray-600 pointer-events-none z-20 leading-none">
+      <div class="flex items-center gap-1"><div class="w-5 sm:w-7 h-1.5 sm:h-2 bg-[#102c4c] rounded-full"></div>1号线</div>
+      <div class="flex items-center gap-1"><div class="w-5 sm:w-7 h-1.5 sm:h-2 bg-[#7ab829] rounded-full"></div>2号线</div>
+      <div class="flex items-center gap-1"><div class="w-5 sm:w-7 h-1.5 sm:h-2 bg-[#c42126] rounded-full"></div>教师</div>
+      <div class="flex items-center gap-1"><div class="w-2.5 sm:w-3.5 h-2.5 sm:h-3.5 rounded-full border-2 border-[#102c4c] bg-white"></div>站点</div>
       <div class="flex items-center gap-1">
-        <div class="w-3 h-6 rounded-full border-2 border-gray-500 bg-white flex flex-col justify-center gap-[2px] items-center">
-          <div class="w-1 h-1 bg-gray-400 rounded-full"></div><div class="w-1 h-1 bg-gray-400 rounded-full"></div>
+        <div class="w-2 sm:w-3 h-4 sm:h-5 rounded-full border-[1.5px] border-gray-400 bg-white flex flex-col justify-center gap-px items-center">
+          <div class="w-0.5 h-0.5 bg-gray-400 rounded-full"></div><div class="w-0.5 h-0.5 bg-gray-400 rounded-full"></div>
         </div>
-        换乘站
+        换乘
       </div>
     </div>
     
@@ -266,7 +266,7 @@ const fetchBusLocations = async () => {
 // 当地图一打开，立刻启动雷达
 onMounted(() => {
   fetchBusLocations(); // 先扫第一眼
-  radarInterval = setInterval(fetchBusLocations, 1500); // 以后每隔 1.5 秒扫一眼
+  radarInterval = setInterval(fetchBusLocations, 800); // 800ms 高频轮询，配合连续 progress 实现平滑移动
 });
 
 // 当退出地图时，记得关掉雷达，省电！

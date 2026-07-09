@@ -1,6 +1,6 @@
 <template>
   <div class="h-screen bg-gray-900 flex items-center justify-center">
-    <div class="bg-white p-10 rounded-2xl shadow-2xl w-96 relative overflow-hidden">
+    <div class="bg-white p-6 sm:p-10 rounded-2xl shadow-2xl w-[calc(100%-2rem)] max-w-sm relative overflow-hidden mx-auto">
       <div class="absolute top-0 left-0 w-full h-2 bg-blue-600"></div>
       
       <h2 class="text-3xl font-black text-gray-800 mb-2">系统登录</h2>

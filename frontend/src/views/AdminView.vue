@@ -1,104 +1,100 @@
 <template>
   <div class="h-screen bg-gray-100 flex overflow-hidden">
-    
-    <div class="w-64 bg-gray-900 text-white p-6 flex flex-col shadow-2xl z-10">
-      <h2 class="text-2xl font-black tracking-widest text-blue-400 mb-10">
-        OptiBus <br><span class="text-sm text-gray-400 font-normal">智能调度总控台</span>
+
+    <button
+      @click="sidebarOpen = !sidebarOpen"
+      class="lg:hidden fixed top-4 left-4 z-30 bg-gray-900 text-white p-2 rounded-lg shadow-lg"
+    >
+      <span class="text-xl">{{ sidebarOpen ? '✕' : '☰' }}</span>
+    </button>
+
+    <div
+      :class="[
+        'bg-gray-900 text-white p-6 flex flex-col shadow-2xl z-20 transition-all duration-300',
+        sidebarOpen ? 'fixed inset-y-0 left-0 w-56 translate-x-0' : 'fixed inset-y-0 left-0 w-56 -translate-x-full',
+        'lg:static lg:translate-x-0 lg:w-56 xl:w-64'
+      ]"
+    >
+      <h2 class="text-xl xl:text-2xl font-black tracking-widest text-blue-400 mb-6 xl:mb-10">
+        OptiBus <br><span class="text-xs xl:text-sm text-gray-400 font-normal">智能调度总控台</span>
       </h2>
-      
+
       <nav class="flex flex-col space-y-2 flex-grow">
-        <button 
-          @click="activeTab = 'monitor'" 
-          :class="['px-4 py-3 rounded-lg text-left font-bold transition-all flex items-center gap-3', activeTab === 'monitor' ? 'bg-blue-600 shadow-md text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200']"
+        <button
+          @click="activeTab = 'monitor'; sidebarOpen = false"
+          :class="['px-3 xl:px-4 py-3 rounded-lg text-left font-bold transition-all flex items-center gap-2 xl:gap-3 text-sm xl:text-base', activeTab === 'monitor' ? 'bg-blue-600 shadow-md text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200']"
         >
           <span>🗺️</span> 实时监控看板
         </button>
-        
-        <button 
-          @click="activeTab = 'schedule'" 
-          :class="['px-4 py-3 rounded-lg text-left font-bold transition-all flex items-center gap-3', activeTab === 'schedule' ? 'bg-blue-600 shadow-md text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200']"
+        <button
+          @click="activeTab = 'schedule'; sidebarOpen = false"
+          :class="['px-3 xl:px-4 py-3 rounded-lg text-left font-bold transition-all flex items-center gap-2 xl:gap-3 text-sm xl:text-base', activeTab === 'schedule' ? 'bg-blue-600 shadow-md text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200']"
         >
           <span>🚌</span> 车辆排班管理
         </button>
-        
-        <button 
-          @click="activeTab = 'warning'" 
-          :class="['px-4 py-3 rounded-lg text-left font-bold transition-all flex items-center gap-3', activeTab === 'warning' ? 'bg-blue-600 shadow-md text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200']"
+        <button
+          @click="activeTab = 'warning'; sidebarOpen = false"
+          :class="['px-3 xl:px-4 py-3 rounded-lg text-left font-bold transition-all flex items-center gap-2 xl:gap-3 text-sm xl:text-base', activeTab === 'warning' ? 'bg-blue-600 shadow-md text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200']"
         >
           <span>⚠️</span> 运力重构预警
         </button>
       </nav>
 
-      <button @click="handleLogout" class="mt-auto text-gray-500 hover:text-red-400 font-bold text-sm text-left transition-colors flex items-center gap-2">
+      <button @click="handleLogout" class="mt-auto text-gray-500 hover:text-red-400 font-bold text-xs xl:text-sm text-left transition-colors flex items-center gap-2">
         <span>🚪</span> 安全退出登录
       </button>
     </div>
 
-    <div class="flex-1 p-8 overflow-y-auto">
-      
+    <div v-if="sidebarOpen" @click="sidebarOpen = false" class="lg:hidden fixed inset-0 bg-black/50 z-10"></div>
+
+    <div class="flex-1 p-4 sm:p-6 xl:p-8 overflow-y-auto pt-16 lg:pt-8">
+
+      <!-- ============ 监控看板 ============ -->
       <div v-if="activeTab === 'monitor'" class="animate-fade-in">
-        <div class="grid grid-cols-3 gap-6 mb-6">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-6 mb-6">
           <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-            <p class="text-gray-500 text-sm font-bold mb-1">当前在线车辆</p>
-            <span class="text-4xl font-black text-gray-800">{{ currentBusCount }}</span>
+            <p class="text-gray-500 text-sm font-bold mb-3">各线路在线车辆</p>
+            <div class="space-y-2">
+              <div v-for="b in busCountsList" :key="b.name" class="flex items-center justify-between">
+                <span class="text-sm font-bold" :style="{color: b.color}">{{ b.name }}</span>
+                <span class="text-xl font-black text-gray-800">{{ b.count }} <span class="text-xs text-gray-400 font-normal">辆</span></span>
+              </div>
+              <div v-if="busCountsList.length === 0" class="text-gray-400 text-sm">加载中...</div>
+            </div>
           </div>
-          <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-            <p class="text-gray-500 text-sm font-bold mb-1">全网平均候车时长</p>
-            <div class="flex items-end space-x-2"><span class="text-4xl font-black text-green-500">4.2</span><span class="text-gray-400 font-medium mb-1">分钟</span></div>
+          <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-center">
+            <div class="text-center">
+              <span class="text-3xl">🚧</span>
+              <p class="text-gray-400 text-sm font-bold mt-1">平均候车时长功能待开发</p>
+            </div>
           </div>
-          <div class="bg-white p-6 rounded-2xl shadow-sm border border-red-100 bg-red-50">
-            <p class="text-red-500 text-sm font-bold mb-1">系统运力拥堵预警</p>
-            <div class="flex items-end space-x-2"><span class="text-4xl font-black text-red-600">1号线</span><span class="text-red-400 font-medium mb-1">过载</span></div>
+          <div :class="['p-6 rounded-2xl shadow-sm border', congestionList.length > 0 ? 'bg-red-50 border-red-100' : 'bg-white border-gray-100']">
+            <p :class="['text-sm font-bold mb-1', congestionList.length > 0 ? 'text-red-500' : 'text-gray-500']">系统运力拥堵预警</p>
+            <div v-if="congestionList.length > 0" class="flex items-end space-x-2">
+              <span class="text-2xl font-black text-red-600">{{ congestionList.map(c => c.display).join('、') }}</span>
+              <span class="text-red-400 font-medium mb-0.5">过载</span>
+            </div>
+            <div v-else class="flex items-end space-x-2">
+              <span class="text-2xl font-black text-green-500">暂无预警</span>
+            </div>
           </div>
         </div>
-        
         <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
           <h3 class="text-lg font-bold text-gray-800 mb-4">📍 园区全路网实时拓扑图</h3>
-          <MapCanvas :isAdmin="true" @updateBusCount="handleBusCountUpdate" />
+          <MapCanvas :isAdmin="true" />
         </div>
       </div>
 
-      <div v-if="activeTab === 'schedule'" class="animate-fade-in bg-white p-8 rounded-2xl shadow-sm border border-gray-100 h-full">
-        <div class="flex justify-between items-center mb-6">
-          <h3 class="text-xl font-black text-gray-800">今日车辆排班计划</h3>
-          <button class="px-4 py-2 bg-blue-600 text-white rounded-lg font-bold text-sm hover:bg-blue-700">＋ 新增排班</button>
+      <!-- ============ 车辆排班 ============ -->
+      <div v-if="activeTab === 'schedule'" class="animate-fade-in bg-white p-8 rounded-2xl shadow-sm border border-gray-100 h-full flex items-center justify-center">
+        <div class="text-center">
+          <span class="text-6xl">🚧</span>
+          <h3 class="text-2xl font-black text-gray-400 mt-4">该功能正在开发中</h3>
+          <p class="text-gray-400 mt-2">车辆排班管理即将上线</p>
         </div>
-        <table class="w-full text-left border-collapse">
-          <thead>
-            <tr class="bg-gray-50 text-gray-500 text-sm border-b border-gray-200">
-              <th class="p-4 rounded-tl-lg">车牌号</th>
-              <th class="p-4">负责线路</th>
-              <th class="p-4">当班司机</th>
-              <th class="p-4">当前状态</th>
-              <th class="p-4 rounded-tr-lg">操作</th>
-            </tr>
-          </thead>
-          <tbody class="text-gray-700">
-            <tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors">
-              <td class="p-4 font-bold text-blue-600">京A·BD101</td>
-              <td class="p-4"><span class="bg-blue-100 text-blue-800 px-2 py-1 rounded text-xs font-bold">1号线</span></td>
-              <td class="p-4">张师傅 (工号: driver01)</td>
-              <td class="p-4"><span class="flex items-center gap-2"><div class="w-2 h-2 rounded-full bg-green-500"></div> 行驶中</span></td>
-              <td class="p-4"><button @click="editDriver('京A·BD101')" class="text-blue-500 hover:underline text-sm">AI 排班</button></td>
-            </tr>
-            <tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors">
-              <td class="p-4 font-bold text-green-600">京A·BD202</td>
-              <td class="p-4"><span class="bg-green-100 text-green-800 px-2 py-1 rounded text-xs font-bold">2号线</span></td>
-              <td class="p-4">李师傅 (工号: driver02)</td>
-              <td class="p-4"><span class="flex items-center gap-2"><div class="w-2 h-2 rounded-full bg-green-500"></div> 行驶中</span></td>
-              <td class="p-4"><button @click="editDriver('京A·BD202')" class="text-blue-500 hover:underline text-sm">AI 排班</button></td>
-            </tr>
-            <tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors">
-              <td class="p-4 font-bold text-gray-600">京A·BD303</td>
-              <td class="p-4"><span class="bg-gray-200 text-gray-600 px-2 py-1 rounded text-xs font-bold">待命备勤</span></td>
-              <td class="p-4">王师傅 (工号: driver03)</td>
-              <td class="p-4"><span class="flex items-center gap-2"><div class="w-2 h-2 rounded-full bg-gray-400"></div> 场站休息</span></td>
-              <td class="p-4"><button @click="dispatchVehicle('京A·BD303')" class="text-blue-500 hover:underline text-sm">派车</button></td>
-            </tr>
-          </tbody>
-        </table>
       </div>
 
+      <!-- ============ 运力重构预警 ============ -->
       <div v-if="activeTab === 'warning'" class="animate-fade-in space-y-6">
         <div class="mt-4 p-4 bg-gray-50 rounded-lg">
           <h4 class="font-bold text-gray-700 mb-2">当前各线路排队情况：</h4>
@@ -107,30 +103,28 @@
             <div class="text-sm">2号线: <span class="text-green-600 font-bold">{{ lineStats['line2_cw'] || 0 }} 人</span></div>
           </div>
         </div>
-        <div class="bg-red-50 p-6 rounded-2xl border border-red-200 flex justify-between items-center shadow-sm">
-          <div>
-            <h3 class="text-xl font-black text-red-600 mb-2 flex items-center gap-2"><span>🚨</span> 紧急情况：1号线运力告急！</h3>
-            <div class="mt-4 flex gap-4">
-    <button @click="sendDispatchAlert" class="px-6 py-3 bg-red-600 text-white rounded-xl ...">
-      授权 AI 自动执行方案
-    </button>
-    
-    <button @click="simulateMassiveCrowd" class="px-6 py-3 border-2 border-red-600 text-red-600 font-bold rounded-xl hover:bg-red-50 active:scale-95 transition-all flex items-center gap-2">
-      <span>⚠️</span> 模拟1号线极端爆满
-    </button>
-  </div>
-            <p class="text-gray-700">系统检测到 <span class="font-bold">图书馆站、中传专享楼</span> 产生大量滞留乘客，排队人数超阀值。</p>
+
+        <div class="bg-red-50 p-6 rounded-2xl border border-red-200 shadow-sm">
+          <h3 class="text-xl font-black text-red-600 mb-2 flex items-center gap-2"><span>🚨</span> 紧急情况：1号线运力告急！</h3>
+          <p class="text-gray-700 mb-4">系统检测到 <span class="font-bold">图书馆站、中传专享楼</span> 产生大量滞留乘客，排队人数超阀值。</p>
+          <div class="flex flex-wrap gap-3">
+            <button @click="simulateMassiveCrowd" class="px-5 py-3 border-2 border-red-600 text-red-600 font-bold rounded-xl hover:bg-red-50 active:scale-95 transition-all flex items-center gap-2">
+              <span>⚠️</span> 模拟1号线极端爆满
+            </button>
+            <button @click="triggerDispatch" :disabled="dispatching" class="px-5 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 disabled:bg-gray-400 active:scale-95 transition-all">
+              {{ dispatching ? '调度执行中...' : '📋 授权系统执行调度方案' }}
+            </button>
+            <button @click="resetLine1" :disabled="resetting" class="px-5 py-3 bg-green-600 text-white font-bold rounded-xl hover:bg-green-700 disabled:bg-gray-400 active:scale-95 transition-all">
+              {{ resetting ? '恢复中...' : '✅ 模拟1号线恢复正常' }}
+            </button>
           </div>
-          <button @click="sendDispatchAlert" class="px-6 py-3 bg-red-600 text-white rounded-xl font-black text-lg hover:bg-red-700 active:scale-95 shadow-lg shadow-red-600/30 transition-all">
-  授权 AI 自动执行方案
-</button>
         </div>
 
         <div class="bg-white p-8 rounded-2xl shadow-sm border border-gray-100">
           <h3 class="text-lg font-bold text-gray-800 mb-4">系统建议调度方案</h3>
           <ul class="space-y-3 text-gray-600">
-            <li class="flex items-center gap-3"><div class="w-2 h-2 rounded-full bg-blue-500"></div> 建议将场站待命的 <strong>京A·BD303</strong> 立即发往 1号线 支援。</li>
-            <li class="flex items-center gap-3"><div class="w-2 h-2 rounded-full bg-green-500"></div> 建议 2号线 <strong>京A·BD202</strong> 卸客后，临时变更线路前往 1号线。</li>
+            <li class="flex items-center gap-3"><div class="w-2 h-2 rounded-full bg-blue-500"></div> 呼叫 <strong>2号线</strong> 的两辆车立即前往 <strong>1号线</strong> 支援。</li>
+            <li class="flex items-center gap-3"><div class="w-2 h-2 rounded-full bg-green-500"></div> 支援车辆到达 <strong>中传专享楼</strong> 后自动变线，无需人工干预。</li>
           </ul>
         </div>
       </div>
@@ -145,47 +139,47 @@ import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import MapCanvas from '../components/MapCanvas.vue';
 
-
 const router = useRouter();
-// 控制当前显示哪个模块的变量，默认显示 map (监控看板)
-const activeTab = ref('monitor'); 
+const activeTab = ref('monitor');
+const sidebarOpen = ref(false);
 
 const handleLogout = () => {
   localStorage.removeItem('adminToken');
   router.push('/login');
 };
 
-// 模拟发送调度指令 (全自动)
-const sendDispatchAlert = () => {
-  alert('🚀 全网运力自动重构完成！\nAI 已自动接管所有车辆路线，司机端已全部收到最新导航指令！');
+// ============ 实时数据 ============
+const lineStats = ref({});
+const congestionList = ref([]);
+const busCountsList = ref([]);
+
+const fetchDashboard = async () => {
+  try {
+    const res = await axios.get('/api/dispatch/dashboard');
+    congestionList.value = res.data.congestion || [];
+    busCountsList.value = res.data.routeBusCounts || [];
+  } catch (err) {
+    console.error("获取看板数据失败", err);
+  }
 };
 
-// 更换司机逻辑 (全自动)
-const editDriver = (busPlate) => {
-  alert(`🤖 AI 自动排班触发：\n已自动为 ${busPlate} 匹配并指派了最优备班司机。`);
+const fetchLineStats = async () => {
+  try {
+    const res = await axios.get('/api/dispatch/stats');
+    lineStats.value = res.data;
+  } catch (err) {
+    console.error("获取统计数据失败", err);
+  }
 };
 
-// 派车支援逻辑 (全自动)
-const dispatchBus = (busPlate) => {
-  alert(`⚡ AI 自动调度执行完毕！\n系统已根据实时运力算法，将待命车辆 ${busPlate} 自动编入【1号线】缓解客流压力。指令已瞬间同步至司机端！`);
-};
-
-// 删掉你原本 156~165 行的内容，替换成下面这几行：
-const currentBusCount = ref(0); 
-
-const handleBusCountUpdate = (count) => {
-  currentBusCount.value = count;
-};
-
-
-// 🚀 一键触发柔性调度：分批注入避免打爆云Redis
+// ============ 模拟1号线极端爆满 ============
 const simulateMassiveCrowd = async () => {
   const confirmMsg = "确定要向【公共教学楼】注入 40 名排队乘客吗？这将立刻触发后端的跨线调度！";
   if (!confirm(confirmMsg)) return;
 
   console.log("🔥 开始分批注入 40 名乘客...");
   let successCount = 0;
-  const BATCH_SIZE = 12;      // 每批 12 个
+  const BATCH_SIZE = 12;
   const TOTAL = 40;
   const ts = Date.now();
 
@@ -199,7 +193,7 @@ const simulateMassiveCrowd = async () => {
           action: 'join',
           station_id: '公共教学楼'
         }).then(() => successCount++)
-        .catch(() => {})  // 单条失败不中断整批
+        .catch(() => {})
       );
     }
     await Promise.all(batch);
@@ -214,24 +208,44 @@ const simulateMassiveCrowd = async () => {
   setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 500); }, 4000);
 };
 
-const lineStats = ref({}); // 存储排队人数
+// ============ 授权系统执行调度方案 ============
+const dispatching = ref(false);
 
-// 每 3 秒拉取一次排队情况
-const fetchLineStats = async () => {
+const triggerDispatch = async () => {
+  dispatching.value = true;
   try {
-    const res = await axios.get('/api/dispatch/stats');
-    lineStats.value = res.data;
-  } catch (err) {
-    console.error("获取统计数据失败", err);
+    const res = await axios.post('/api/dispatch/trigger_scan');
+    alert(`✅ 调度扫描已执行！\n${res.data.message || '系统已自动调配车辆。'}`);
+  } catch (e) {
+    alert('调度执行失败: ' + (e.response?.data?.detail || e.message));
   }
+  dispatching.value = false;
 };
 
-// 在 onMounted 里加上它
-onMounted(() => {
-  // ...你原有的代码...
-  setInterval(fetchLineStats, 3000); // 开启排队人数监控
-});
+// ============ 模拟1号线恢复正常 ============
+const resetting = ref(false);
 
+const resetLine1 = async () => {
+  if (!confirm('确定要清除1号线所有排队乘客，并将调度的车辆归还原线路吗？')) return;
+  resetting.value = true;
+  try {
+    const res = await axios.post('/api/dispatch/reset_line1');
+    alert(`✅ ${res.data.message || '1号线已恢复正常！'}`);
+    fetchDashboard();
+    fetchLineStats();
+  } catch (e) {
+    alert('恢复失败: ' + (e.response?.data?.detail || e.message));
+  }
+  resetting.value = false;
+};
+
+// ============ 生命周期 ============
+onMounted(() => {
+  fetchDashboard();
+  fetchLineStats();
+  setInterval(fetchDashboard, 3000);
+  setInterval(fetchLineStats, 3000);
+});
 </script>
 
 <style scoped>

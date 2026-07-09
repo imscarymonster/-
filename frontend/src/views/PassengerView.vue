@@ -10,7 +10,7 @@
     <main class="flex-1 flex justify-center items-center overflow-hidden relative">
       <MapCanvas :isAdmin="false" @stationClick="handleStationSelect" />
 
-      <div v-if="selectedStation" class="absolute bottom-12 left-1/2 transform -translate-x-1/2 bg-white/95 backdrop-blur-md p-6 rounded-2xl shadow-2xl border border-gray-200 w-96 text-center z-20 animate-fade-in-up">
+      <div v-if="selectedStation" class="absolute bottom-4 sm:bottom-12 left-1/2 transform -translate-x-1/2 bg-white/95 backdrop-blur-md p-4 sm:p-6 rounded-2xl shadow-2xl border border-gray-200 w-[calc(100%-1rem)] max-w-sm text-center z-20 animate-fade-in-up">
         
         <div v-if="!isWaiting">
           <h2 class="text-xl font-black text-gray-800 mb-2">确认候车信息</h2>
