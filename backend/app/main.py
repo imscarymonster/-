@@ -102,6 +102,7 @@ _sim_t0: float | None = None
 BUS_CAPACITY = 13             # 单车标准运力评估值
 SAFETY_MARGIN = 5             # 安全余量
 DISPATCH_SCAN_INTERVAL = 30   # 后台扫描间隔 (秒)
+SIMULATION_SPEEDUP = 5.0      # 演示加速倍率（5x：现实3s=系统15s=1tick）
 LIFECYCLE_KEY_PREFIX = "user:lifecycle:"
 
 # 路线单圈耗时缓存
@@ -382,7 +383,7 @@ def _find_nearest_bus_on_route(
 
     # 仿真车（无真车时）
     if best_bus_id is None and _sim_t0 is not None:
-        elapsed = time.time() - _sim_t0
+        elapsed = (time.time() - _sim_t0) * SIMULATION_SPEEDUP
         for b in BUS_FLEET:
             if b["route_key"] != source_route_key:
                 continue
@@ -534,7 +535,7 @@ def _get_min_eta_for_station(route_key: str, station_id: str) -> int:
                 best = eta
     # 仿真
     if best == 999 and _sim_t0 is not None:
-        elapsed = time.time() - _sim_t0
+        elapsed = (time.time() - _sim_t0) * SIMULATION_SPEEDUP
         for b in BUS_FLEET:
             if b["route_key"] != route_key:
                 continue
@@ -657,16 +658,25 @@ async def lifespan(app: FastAPI):
         redis_client.ping()
         print("✅ Redis 连接成功")
 
-        # 初始化线路车辆基数（仅首次）
-        if not redis_client.exists("route:bus_count"):
-            counts: dict[str, int] = {}
-            for bus in BUS_FLEET:
-                rk = bus["route_key"]
-                counts[rk] = counts.get(rk, 0) + 1
-            for rk, cnt in counts.items():
-                redis_client.hset("route:bus_count", rk, str(cnt))
-                redis_client.hset("route:fixed_bus_count", rk, str(cnt))
-            print("📊 线路车辆基数已同步至 Redis")
+        # 清理上次运行的残留数据，确保每次启动从零开始
+        redis_client.delete("bus:status:all")
+        redis_client.delete("route:bus_count")
+        redis_client.delete("route:fixed_bus_count")
+        redis_client.delete("route:user_count")
+        # 清理所有乘客 lifecycle 记录
+        for stale_key in redis_client.scan_iter("user:lifecycle:*"):
+            redis_client.delete(stale_key)
+        print("🧹 已清空上次残留的车队/乘客/坐标缓存")
+
+        # 初始化线路车辆基数
+        counts: dict[str, int] = {}
+        for bus in BUS_FLEET:
+            rk = bus["route_key"]
+            counts[rk] = counts.get(rk, 0) + 1
+        for rk, cnt in counts.items():
+            redis_client.hset("route:bus_count", rk, str(cnt))
+            redis_client.hset("route:fixed_bus_count", rk, str(cnt))
+        print(f"📊 线路车辆基数已同步至 Redis（{len(counts)} 条线路）")
     except Exception:
         print("⚠️ Redis 连接失败，请检查服务是否启动")
 
@@ -904,7 +914,7 @@ async def get_bus_locations():
 
     # ---------- 仿真车 ----------
     if _sim_t0 is not None:
-        elapsed = time.time() - _sim_t0
+        elapsed = (time.time() - _sim_t0) * SIMULATION_SPEEDUP
         for bus in BUS_FLEET:
             if any(b["busId"] == bus["busId"] for b in result):
                 continue
@@ -930,16 +940,31 @@ async def get_bus_locations():
 # ==================== ETA 接口 ====================
 
 @app.get("/api/eta/{station_id}")
-async def get_eta(station_id: str):
+async def get_eta(station_id: str, route: str | None = None):
+    """查询最近一班车到达指定站点的 ETA（分钟）。
+
+    可选 query 参数 route（如 ?route=line1_cw）限定只计算指定线路的车辆。
+    """
     if station_id not in STATIONS_XY:
         return {"error": f"未知站点: {station_id}"}
-    station_route_map = build_station_route_map()
-    candidate_routes = station_route_map.get(station_id, [])
+
+    # 若指定 route，直接以它为唯一候选；否则查全表
+    if route:
+        if route not in ROUTES_SEQUENCE:
+            return {"error": f"未知线路: {route}"}
+        candidate_routes = [route]
+    else:
+        station_route_map = build_station_route_map()
+        candidate_routes = station_route_map.get(station_id, [])
+
     if not candidate_routes:
         return {"stationId": station_id, "etaMinutes": None, "busId": None,
                 "message": "无线路经过此站"}
+
     best_eta = float("inf")
     best_bus_id = None
+
+    # ---------- 真车 ----------
     all_buses = redis_client.hgetall("bus:status:all")
     for driver_id, raw_json in all_buses.items():
         try:
@@ -950,20 +975,33 @@ async def get_eta(station_id: str):
         lng = data.get("lng", 0.0)
         route_id = data.get("route_id", 0)
         rk = data.get("route_key") or data.get("current_route_key") or ""
-        matching_keys = [rk] if rk in candidate_routes else [
-            r for r in candidate_routes if str(route_id) in r or r.startswith(f"line{route_id}")
-        ]
+
+        # 解析匹配的路线键
+        if rk and rk in ROUTES_SEQUENCE:
+            matching_keys = [rk]
+        else:
+            matching_keys = [r for r in candidate_routes
+                             if str(route_id) in r or r.startswith(f"line{route_id}")]
         if not matching_keys:
             matching_keys = [r for r in candidate_routes]
+
+        # 线路过滤：仅计算请求指定的 route
         for mk in matching_keys:
+            if route and mk != route:
+                continue
             eta = calculate_eta(lat, lng, mk, station_id)
             if eta is not None and eta < best_eta:
                 best_eta = eta
                 best_bus_id = driver_id
+
+    # ---------- 仿真车 ----------
     if best_bus_id is None and _sim_t0 is not None:
-        elapsed = time.time() - _sim_t0
+        elapsed = (time.time() - _sim_t0) * SIMULATION_SPEEDUP
         for bus in BUS_FLEET:
-            if bus["route_key"] not in candidate_routes:
+            # 线路过滤
+            if route and bus["route_key"] != route:
+                continue
+            if not route and bus["route_key"] not in candidate_routes:
                 continue
             pos = get_simulated_position(bus, elapsed)
             if pos is None:
@@ -972,6 +1010,7 @@ async def get_eta(station_id: str):
             if eta is not None and eta < best_eta:
                 best_eta = eta
                 best_bus_id = bus["busId"]
+
     if best_bus_id is None:
         return {"stationId": station_id, "etaMinutes": None, "busId": None,
                 "message": "暂无可用车辆"}
