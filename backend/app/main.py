@@ -355,33 +355,35 @@ def _get_real_bus_positions() -> dict[str, tuple[float, float, str | None, dict]
     return result
 
 
-def _find_nearest_bus_on_route(
-    source_route_key: str, target_route_key: str,
-) -> str | None:
-    """在 source 线路上找到离 target 线路起点最近的一辆车，返回 busId。"""
-    # 目标线路参考点：取第一个站点坐标
-    target_route = ROUTES_SEQUENCE[target_route_key]
-    target_xy = STATIONS_XY[target_route[0]]
+def _get_route_direction(route_key: str) -> str:
+    """提取路线方向后缀（_cw 或 _ccw）。"""
+    if route_key.endswith("_cw"):
+        return "_cw"
+    if route_key.endswith("_ccw"):
+        return "_ccw"
+    return ""
 
+
+def _find_fastest_bus_to_hub(source_route_key: str) -> str | None:
+    """在闲线上找到最快能到达中转站『中传专享楼』的车（按 ETA 排序）。"""
+    HUB = "中传专享楼"
     best_bus_id: str | None = None
-    best_dist = float("inf")
+    best_eta: float = float("inf")
 
     # 真车
     for bus_id, (lat, lng, rk, data) in _get_real_bus_positions().items():
-        effective_rk = rk
-        if effective_rk is None:
+        if rk != source_route_key:
             continue
-        if effective_rk != source_route_key:
+        if data.get("pending_return") or data.get("pending_dispatch_to") or data.get("original_route_key"):
             continue
-        # 跳过已被标记 pending_return 或即将离开的车
-        if data.get("pending_return"):
+        if time.time() - data.get("dispatch_timestamp", 0) < 60:
             continue
-        d = get_distance((lat, lng), target_xy)
-        if d < best_dist:
-            best_dist = d
+        eta = calculate_eta(lat, lng, source_route_key, HUB)
+        if eta is not None and eta < best_eta:
+            best_eta = eta
             best_bus_id = bus_id
 
-    # 仿真车（无真车时）
+    # 仿真车
     if best_bus_id is None and _sim_t0 is not None:
         elapsed = (time.time() - _sim_t0) * SIMULATION_SPEEDUP
         for b in BUS_FLEET:
@@ -390,25 +392,39 @@ def _find_nearest_bus_on_route(
             pos = get_simulated_position(b, elapsed)
             if pos is None:
                 continue
-            d = get_distance(pos, target_xy)
-            if d < best_dist:
-                best_dist = d
+            eta = calculate_eta(pos[0], pos[1], source_route_key, HUB)
+            if eta is not None and eta < best_eta:
+                best_eta = eta
                 best_bus_id = b["busId"]
 
     return best_bus_id
 
 
+def _resolve_dispatch_target(target_route_key: str, source_route_key: str) -> str:
+    """方向继承：目标线前缀 + 源车方向后缀。
+
+    例: target=line1_cw, source=line2_cw → line1_cw
+         target=line1_ccw, source=line2_cw → line1_cw
+    """
+    import re
+    target_base = re.sub(r'_(cw|ccw)$', '', target_route_key)
+    source_dir = _get_route_direction(source_route_key)
+    return target_base + source_dir
+
+
 # ============================================================================
-# 调度引擎 — 原子变线
+# 调度引擎 — 两段式变线（阶段 A：打标记；阶段 B：到站变装）
 # ============================================================================
 
-def _execute_dispatch(target_route_key: str, source_route_key: str) -> bool:
-    """从闲线抽调一辆最近的车到目标线。原子操作。返回是否成功。"""
-    bus_id = _find_nearest_bus_on_route(source_route_key, target_route_key)
+def _mark_dispatch_candidate(target_route_key: str, source_route_key: str) -> bool:
+    """阶段 A：选定闲线上 ETA 最短的车，打 pending_dispatch_to 标记。
+
+    车辆仍沿原线行驶，绝不瞬移！变线在到达中转站时才执行。
+    """
+    bus_id = _find_fastest_bus_to_hub(source_route_key)
     if bus_id is None:
         return False
 
-    # 读取并更新 bus:status:all
     raw = redis_client.hget("bus:status:all", bus_id)
     if raw:
         try:
@@ -418,27 +434,100 @@ def _execute_dispatch(target_route_key: str, source_route_key: str) -> bool:
     else:
         data = {}
 
-    # 记录老东家（若之前未被调度过）
+    # 记录老东家
     if "original_route_key" not in data or not data.get("original_route_key"):
         data["original_route_key"] = source_route_key
 
-    data["route_key"] = target_route_key
-    data["current_route_key"] = target_route_key
-    data["pending_return"] = False
+    # 方向继承：目标线前缀 + 源车方向后缀
+    pending_target = _resolve_dispatch_target(target_route_key, source_route_key)
+
+    data["pending_dispatch_to"] = pending_target
+    data["transfer_station"] = "中传专享楼"
     data["status"] = "dispatched"
     redis_client.hset("bus:status:all", bus_id, json.dumps(data))
 
-    # 原子基数同步
-    redis_client.hincrby("route:bus_count", source_route_key, -1)
-    redis_client.hincrby("route:bus_count", target_route_key, 1)
-
-    # 防止负数
-    src_cnt = int(redis_client.hget("route:bus_count", source_route_key) or 0)
-    if src_cnt < 0:
-        redis_client.hset("route:bus_count", source_route_key, "0")
-
-    print(f"🚛 调度: {bus_id} 从 {source_route_key} → {target_route_key}")
+    print(f"📋 标记调度: {bus_id} ({source_route_key}) → {pending_target}，待到达中传专享楼")
     return True
+
+
+def _distance_along_route(route_key: str, target_station: str) -> float:
+    """计算从路线起点到 target_station 首次出现的累计距离 (米)。"""
+    route = ROUTES_SEQUENCE[route_key]
+    total = 0.0
+    for i in range(len(route) - 1):
+        if route[i] == target_station:
+            return total
+        total += get_distance(STATIONS_XY[route[i]], STATIONS_XY[route[i + 1]])
+    return total
+
+
+def _recalibrate_sim_bus(bus_id: str, new_route_key: str):
+    """重置仿真车的 departure_offset_s，使其在新路线上位于中传专享楼且平滑向前。
+
+    使用 tick 系统对齐：target_tick = 2 * hub_idx + 已完成周期 * 周期tick数。
+    确保 bus 在下一个 tick 能平滑过渡到 in-transit 状态。
+    """
+    if _sim_t0 is None:
+        return
+    pure = REAL_ROUTES.get(new_route_key, [])
+    if not pure or "中传专享楼" not in pure:
+        return
+
+    hub_idx = pure.index("中传专享楼")
+    TICK_S = 15
+    cycle_ticks = len(pure) * 2          # 一个完整周期的 tick 数
+    cycle_time = cycle_ticks * TICK_S    # 一个周期秒数
+
+    elapsed = (time.time() - _sim_t0) * SIMULATION_SPEEDUP
+    base_travel = hub_idx * 2 * TICK_S   # 到达 hub_idx 所需秒数
+    current_cycle = int(elapsed / cycle_time) if cycle_time > 0 else 0
+    travel_t = current_cycle * cycle_time + base_travel
+    new_offset = elapsed - travel_t
+
+    for b in BUS_FLEET:
+        if b["busId"] == bus_id:
+            b["route_key"] = new_route_key
+            b["departure_offset_s"] = new_offset
+            print(f"🔄 仿真校准: {bus_id} → {new_route_key}, hub_idx={hub_idx}, "
+                  f"cycle={current_cycle}, offset={new_offset:.1f}s")
+            return
+
+
+def _check_pending_dispatches():
+    """阶段 B：检测已标记车辆是否到达中转站，执行变线 + 基数同步。"""
+    HUB = "中传专享楼"
+    hub_xy = STATIONS_XY[HUB]
+
+    for bus_id, (lat, lng, _rk, data) in _get_real_bus_positions().items():
+        pending_target = data.get("pending_dispatch_to")
+        if not pending_target or pending_target not in ROUTES_SEQUENCE:
+            continue
+
+        if get_distance((lat, lng), hub_xy) < STATION_THRESHOLD:
+            original = data.get("original_route_key", "")
+
+            # 执行变线
+            data["route_key"] = pending_target
+            data["current_route_key"] = pending_target
+            data.pop("pending_dispatch_to", None)
+            data.pop("transfer_station", None)
+            data["status"] = "driving"
+            data["dispatch_timestamp"] = time.time()
+            data["lap_state"] = "just_started"         # 一圈防抖：刚变线，尚未驶离枢纽
+            redis_client.hset("bus:status:all", bus_id, json.dumps(data))
+
+            # 原子基数同步（此时才做！）
+            if original:
+                redis_client.hincrby("route:bus_count", original, -1)
+                cnt = int(redis_client.hget("route:bus_count", original) or 0)
+                if cnt < 0:
+                    redis_client.hset("route:bus_count", original, "0")
+            redis_client.hincrby("route:bus_count", pending_target, 1)
+
+            # 重置 BUS_FLEET 中的仿真时空原点（防止坐标越界崩溃）
+            _recalibrate_sim_bus(bus_id, pending_target)
+
+            print(f"🚛 到站变线: {bus_id} 从 {original} → {pending_target}（到达中传专享楼）")
 
 
 # ============================================================================
@@ -446,7 +535,7 @@ def _execute_dispatch(target_route_key: str, source_route_key: str) -> bool:
 # ============================================================================
 
 def _execute_return(bus_id: str, data: dict):
-    """将一台被调度车归还其原始线路。"""
+    """将一台被调度车归还其原始线路 —— 彻底清零，无缝接轨。"""
     original = data.get("original_route_key")
     current = data.get("route_key") or data.get("current_route_key")
     if not original or not current:
@@ -455,22 +544,28 @@ def _execute_return(bus_id: str, data: dict):
     # 恢复 route_key
     data["route_key"] = original
     data["current_route_key"] = original
-    data.pop("original_route_key", None)
-    data.pop("pending_return", None)
+
+    # 彻底清除所有调度残余标记
+    for tag in ("original_route_key", "pending_return", "lap_state",
+                "pending_dispatch_to", "transfer_station",
+                "pending_return_tagged_at", "pending_dispatch_tagged_at"):
+        data.pop(tag, None)
+
+    # 归还冷却锁：刷新时间戳，60s 内禁止再次被抽调
+    data["dispatch_timestamp"] = time.time()
     data["status"] = "driving"
     redis_client.hset("bus:status:all", bus_id, json.dumps(data))
 
-    # 基数同步
+    # 基数同步：目标线 -1，原线 +1
     redis_client.hincrby("route:bus_count", current, -1)
     redis_client.hincrby("route:bus_count", original, 1)
 
-    # 防负数
     for rk in (current, original):
         cnt = int(redis_client.hget("route:bus_count", rk) or 0)
         if cnt < 0:
             redis_client.hset("route:bus_count", rk, "0")
 
-    print(f"🏠 归还: {bus_id} 从 {current} → 原线路 {original}")
+    print(f"🏠 归还: {bus_id} 从 {current} → 原线路 {original}（冷却60s，标签清零）")
 
 
 # ============================================================================
@@ -478,18 +573,18 @@ def _execute_return(bus_id: str, data: dict):
 # ============================================================================
 
 def _evict_expired_passengers():
-    """扫描所有乘客 lifecycle 记录，静默清理超时用户。"""
+    """扫描 dispatch:passengers Hash，静默清理超时用户。"""
     now = time.time()
     evicted = 0
 
-    for key in redis_client.scan_iter(f"{LIFECYCLE_KEY_PREFIX}*"):
-        raw = redis_client.get(key)
+    all_passengers = redis_client.hgetall("dispatch:passengers")
+    for user_id, raw in all_passengers.items():
         if not raw:
             continue
         try:
             data = json.loads(raw)
         except (json.JSONDecodeError, TypeError):
-            redis_client.delete(key)
+            redis_client.hdel("dispatch:passengers", user_id)
             continue
 
         join_time = data.get("join_time", 0)
@@ -497,7 +592,7 @@ def _evict_expired_passengers():
         station_id = data.get("station_id", "")
 
         if not route_key or route_key not in ROUTES_SEQUENCE:
-            redis_client.delete(key)
+            redis_client.hdel("dispatch:passengers", user_id)
             continue
 
         elapsed = now - join_time
@@ -512,9 +607,8 @@ def _evict_expired_passengers():
         retention = eta_seconds + circle_time
 
         if elapsed >= retention:
-            redis_client.delete(key)
+            redis_client.hdel("dispatch:passengers", user_id)
             redis_client.hincrby("route:user_count", route_key, -1)
-            # 防负数
             cnt = int(redis_client.hget("route:user_count", route_key) or 0)
             if cnt < 0:
                 redis_client.hset("route:user_count", route_key, "0")
@@ -552,68 +646,86 @@ def _get_min_eta_for_station(route_key: str, station_id: str) -> int:
 # ============================================================================
 
 def _check_all_dispatch_conditions():
-    """遍历所有线路，触发运力抽调。"""
+    """遍历所有线路，对过载线寻找闲线并标记候选车辆（阶段 A）。
+
+    选车标准：ETA 最短到达中转站『中传专享楼』的车。
+    """
     for target_rk in ALL_ROUTE_KEYS:
         if not _is_overcrowded(target_rk):
             continue
 
-        # 寻找可抽调的闲线
         candidates = [rk for rk in ALL_ROUTE_KEYS if rk != target_rk and _can_spare_bus(rk)]
         if not candidates:
             continue
 
-        # 按到目标线的物理距离排序闲线（用各闲线第一站坐标）
-        target_xy = STATIONS_XY[ROUTES_SEQUENCE[target_rk][0]]
-        candidates.sort(key=lambda rk: get_distance(
-            STATIONS_XY[ROUTES_SEQUENCE[rk][0]], target_xy))
-
-        # 逐辆抽调，直到目标线恢复健康
+        # 逐闲线尝试标记，直到目标线恢复健康
         for src_rk in candidates:
             if not _is_overcrowded(target_rk):
                 break
             if not _can_spare_bus(src_rk):
                 continue
-            _execute_dispatch(target_rk, src_rk)
+            _mark_dispatch_candidate(target_rk, src_rk)
 
 
 def _check_all_return_conditions():
-    """遍历所有线路，归还可脱离调度的车辆。"""
-    for target_rk in ALL_ROUTE_KEYS:
-        fixed = _get_fixed_bus_count(target_rk)
-        if fixed == 0:
-            continue
-        # 目标线是否已回归平稳
-        if _health_count(fixed) < _get_user_count(target_rk):
+    """一圈防抖归还：支援车必须在新线上完整跑完一圈，再回中传专享楼才归还。
+
+    条件：
+    1. original_route_key 标签存在
+    2. lap_state == "running"（已驶离枢纽，跑完至少一圈）
+    3. 距离中传专享楼 < 20m（刚好回到枢纽）
+    4. dispatch_timestamp >= 60s 冷却（防止刚变线就误判）
+    """
+    HUB = "中传专享楼"
+    hub_xy = STATIONS_XY[HUB]
+
+    for bus_id, (lat, lng, _rk, data) in _get_real_bus_positions().items():
+        original = data.get("original_route_key")
+        if not original or original not in ROUTES_SEQUENCE:
             continue
 
-        # 找到该线路上被调度来的车
-        for bus_id, (lat, lng, rk, data) in _get_real_bus_positions().items():
-            effective_rk = rk or ""
-            if effective_rk != target_rk:
-                continue
-            if "original_route_key" not in data or not data.get("original_route_key"):
-                continue
-            if data.get("pending_return"):
-                # 已标记归还：检查是否跑完一圈（简单处理：标记后经过 circle_time 即归还）
-                tagged_at = float(data.get("pending_return_tagged_at", 0))
-                if tagged_at and (time.time() - tagged_at) >= get_route_circle_time(target_rk):
-                    _execute_return(bus_id, data)
-                continue
-            # 标记 pending_return
-            data["pending_return"] = True
-            data["pending_return_tagged_at"] = time.time()
-            redis_client.hset("bus:status:all", bus_id, json.dumps(data))
-            print(f"📋 标记归还: {bus_id} 待跑完 {target_rk} 后归还 {data.get('original_route_key')}")
+        # 一圈防抖：必须是 running 状态
+        if data.get("lap_state") != "running":
+            continue
+
+        # 冷却拦截
+        if time.time() - data.get("dispatch_timestamp", 0) < 60:
+            continue
+
+        # 必须回到枢纽站
+        if get_distance((lat, lng), hub_xy) >= STATION_THRESHOLD:
+            continue
+
+        # 执行归还 + 仿真校准
+        _execute_return(bus_id, data)
+        _recalibrate_sim_bus(bus_id, original)
 
 
 # ============================================================================
 # 调度引擎 — 后台轮询主循环
 # ============================================================================
 
+def _update_lap_state():
+    """驶离检测：just_started 且距枢纽 >200m → running（确认已开出）。"""
+    HUB = "中传专享楼"
+    hub_xy = STATIONS_XY[HUB]
+    DEPART_DIST = 200.0  # 驶离判定距离 (m)
+
+    for bus_id, (lat, lng, _rk, data) in _get_real_bus_positions().items():
+        if data.get("lap_state") != "just_started":
+            continue
+        if get_distance((lat, lng), hub_xy) > DEPART_DIST:
+            data["lap_state"] = "running"
+            redis_client.hset("bus:status:all", bus_id, json.dumps(data))
+            print(f"🏃 驶离确认: {bus_id} lap_state → running")
+
+
 async def _scan_and_dispatch():
-    """单次调度扫描：清理 → 归还 → 抽调。"""
+    """单次调度扫描：清理 → 归还 → 到站变线(阶段B) → 驶离检测 → 打标记(阶段A)。"""
     _evict_expired_passengers()
     _check_all_return_conditions()
+    _check_pending_dispatches()
+    _update_lap_state()
     _check_all_dispatch_conditions()
 
 
@@ -632,10 +744,16 @@ async def dispatch_scanner():
 # ============================================================================
 
 class PassengerActionRequest(BaseModel):
-    passenger_id: str
+    user_id: str = ""              # 前端新字段名
+    passenger_id: str = ""         # 向后兼容旧字段名
     route_key: str
-    action: str          # 'join' | 'leave'
+    action: str                    # 'join' | 'leave'
     station_id: str | None = None
+
+    @property
+    def pid(self) -> str:
+        """统一返回有效用户 ID（优先 user_id，兜底 passenger_id）。"""
+        return self.user_id or self.passenger_id
 
 
 # ============================================================================
@@ -663,9 +781,7 @@ async def lifespan(app: FastAPI):
         redis_client.delete("route:bus_count")
         redis_client.delete("route:fixed_bus_count")
         redis_client.delete("route:user_count")
-        # 清理所有乘客 lifecycle 记录
-        for stale_key in redis_client.scan_iter("user:lifecycle:*"):
-            redis_client.delete(stale_key)
+        redis_client.delete("dispatch:passengers")
         print("🧹 已清空上次残留的车队/乘客/坐标缓存")
 
         # 初始化线路车辆基数
@@ -771,23 +887,24 @@ async def driver_check_in(data: schemas.DriverDailyCheckIn):
 
 @app.post("/api/dispatch/passenger_action")
 async def passenger_action(req: PassengerActionRequest):
-    """乘客加入/离开排队。
+    """乘客加入/离开排队 —— 使用 dispatch:passengers Hash 瞬时记忆入库。
 
-    - join: 记录 lifecycle，route:user_count +1
-    - leave: 清理 lifecycle，route:user_count -1
-    每个乘客同时只能存在于一条线路。
+    - join: dispatch:passengers HSET + route:user_count +1
+    - leave: dispatch:passengers HDEL + route:user_count -1
     """
-    lifecycle_key = f"{LIFECYCLE_KEY_PREFIX}{req.passenger_id}"
+    user_id = req.pid
+    if not user_id:
+        return {"status": "error", "message": "缺少 user_id 或 passenger_id"}
 
     if req.action == "join":
         if req.route_key not in ROUTES_SEQUENCE:
             return {"status": "error", "message": f"未知线路: {req.route_key}"}
 
         # 防刷：检查是否已在其他线路
-        existing = redis_client.get(lifecycle_key)
-        if existing:
+        existing_raw = redis_client.hget("dispatch:passengers", user_id)
+        if existing_raw:
             try:
-                old = json.loads(existing)
+                old = json.loads(existing_raw)
                 old_rk = old.get("route_key", "")
             except json.JSONDecodeError:
                 old_rk = ""
@@ -797,37 +914,35 @@ async def passenger_action(req: PassengerActionRequest):
                 if cnt < 0:
                     redis_client.hset("route:user_count", old_rk, "0")
 
-        # 写入 lifecycle
+        # 写入 Hash
         record = {
-            "passenger_id": req.passenger_id,
+            "user_id": user_id,
             "route_key": req.route_key,
             "station_id": req.station_id or "",
             "join_time": time.time(),
         }
-        redis_client.set(lifecycle_key, json.dumps(record))
-
-        # 原子 +1
+        redis_client.hset("dispatch:passengers", user_id, json.dumps(record))
         redis_client.hincrby("route:user_count", req.route_key, 1)
 
         return {
             "status": "ok",
             "action": "join",
-            "passenger_id": req.passenger_id,
+            "user_id": user_id,
             "route_key": req.route_key,
             "current_count": int(redis_client.hget("route:user_count", req.route_key) or 0),
         }
 
     elif req.action == "leave":
-        existing = redis_client.get(lifecycle_key)
+        existing_raw = redis_client.hget("dispatch:passengers", user_id)
         route_to_decr = req.route_key
-        if existing:
+        if existing_raw:
             try:
-                old = json.loads(existing)
+                old = json.loads(existing_raw)
                 route_to_decr = old.get("route_key", req.route_key)
             except json.JSONDecodeError:
                 pass
 
-        redis_client.delete(lifecycle_key)
+        redis_client.hdel("dispatch:passengers", user_id)
         redis_client.hincrby("route:user_count", route_to_decr, -1)
         cnt = int(redis_client.hget("route:user_count", route_to_decr) or 0)
         if cnt < 0:
@@ -836,7 +951,7 @@ async def passenger_action(req: PassengerActionRequest):
         return {
             "status": "ok",
             "action": "leave",
-            "passenger_id": req.passenger_id,
+            "user_id": user_id,
             "route_key": route_to_decr,
             "current_count": max(0, cnt),
         }
@@ -852,7 +967,10 @@ async def get_bus_locations():
     result: list[dict] = []
 
     # ---------- 真车 ----------
-    all_buses = redis_client.hgetall("bus:status:all")
+    try:
+        all_buses = redis_client.hgetall("bus:status:all")
+    except Exception:
+        all_buses = {}
     for driver_id, raw_json in all_buses.items():
         try:
             data = json.loads(raw_json)
@@ -965,7 +1083,10 @@ async def get_eta(station_id: str, route: str | None = None):
     best_bus_id = None
 
     # ---------- 真车 ----------
-    all_buses = redis_client.hgetall("bus:status:all")
+    try:
+        all_buses = redis_client.hgetall("bus:status:all")
+    except Exception:
+        all_buses = {}
     for driver_id, raw_json in all_buses.items():
         try:
             data = json.loads(raw_json)
@@ -1022,6 +1143,16 @@ async def get_eta(station_id: str, route: str | None = None):
 
 
 # ==================== 调度引擎 — 管理接口 ====================
+
+@app.get("/api/dispatch/stats")
+async def dispatch_stats():
+    """实时排队统计 —— 返回各线路当前排队人数。"""
+    try:
+        raw = redis_client.hgetall("route:user_count")
+    except Exception:
+        return {}
+    return {rk: int(cnt) for rk, cnt in raw.items()}
+
 
 @app.get("/api/dispatch/status")
 async def dispatch_status():
